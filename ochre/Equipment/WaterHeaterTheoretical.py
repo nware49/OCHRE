@@ -10,7 +10,7 @@ import datetime as dt
 from ochre.utils import OCHREException
 from ochre.utils.units import convert, kwh_to_therms
 from ochre.Equipment import Equipment
-from ochre.Models import OneNodeWaterModel, TwoNodeWaterModel, StratifiedWaterModel, IdealWaterModel, PhaseChangeMaterialModel
+from ochre.Models import OneNodeWaterModel, TwoNodeWaterModel, StratifiedWaterModel, IdealWaterModel
 
 
 class WaterHeater(Equipment):
@@ -28,13 +28,10 @@ class WaterHeater(Equipment):
         # Create water tank model
         if model_class is None:
             nodes = kwargs.get('water_nodes', 2)
-            pcm = kwargs.get('PCM', False)
             if nodes == 1:
                 model_class = OneNodeWaterModel
             elif nodes == 2:
                 model_class = TwoNodeWaterModel
-            elif pcm:
-                model_class = PhaseChangeMaterialModel
             else:
                 model_class = StratifiedWaterModel
 
@@ -660,11 +657,11 @@ class HeatPumpWaterHeater(ElectricResistanceWaterHeater):
             results[f'{self.end_use} Heat Pump COP (-)'] = self.hp_cop
         return results
 
-class LPHeatPumpWaterHeater(HeatPumpWaterHeater):
-    name = 'Low Power Heat Pump Water Heater'
+class ESEHeatPumpWaterHeater(HeatPumpWaterHeater):
+    name = 'ESE Heat Pump Water Heater'
     modes = ['Heat Pump On', 'Lower On', 'Upper On', 'Off']
     optional_inputs = WaterHeater.optional_inputs + ['Zone Wet Bulb Temperature (C)']
-    
+
     def __init__(self, hp_only_mode=False, water_nodes=12, **kwargs):
         super().__init__(water_nodes=water_nodes, **kwargs)
 
@@ -679,7 +676,7 @@ class LPHeatPumpWaterHeater(HeatPumpWaterHeater):
         self.deadband_temp = kwargs.get('Deadband Temperature (C)', 8.17)  # different default than ERWH
 
         # Nominal COP based on simulation of the UEF test procedure at varying COPs
-        self.low_power_hpwh = kwargs.get('Low Power HPWH', True)
+        self.low_power_hpwh = kwargs.get('Low Power HPWH', False)
         self.cop_nominal = kwargs['HPWH COP (-)']
         self.hp_cop = self.cop_nominal
         if self.cop_nominal < 2:
@@ -731,89 +728,6 @@ class LPHeatPumpWaterHeater(HeatPumpWaterHeater):
             self.hp_nodes = np.array([0, 0, 0, 0, 0, 5, 10, 15, 20, 25, 30, 5]) / 110
         else:
             raise OCHREException('{} model not defined for tank with {} nodes'.format(self.name, self.model.n_nodes))
-
-
-class ESEElectricResistanceWaterHeater(ElectricResistanceWaterHeater):
-    name = 'ESE Electric Resistance Water Heater'
-    modes = ['Upper On', 'Lower On', 'Off', 'Charging Battery', 'Discharging Battery']
-
-class ESEHeatPumpWaterHeater(ElectricResistanceWaterHeater):
-    name = 'ESE Heat Pump Water Heater'
-    modes = ['Heat Pump On', 'Lower On', 'Upper On', 'Both On', 'Off']
-    battery_mode = ['Charging Battery', 'Discharging Battery', 'Off']
-    optional_inputs = WaterHeater.optional_inputs + ['Zone Wet Bulb Temperature (C)']
-
-    def __init__(self, hp_only_mode=False, water_nodes=12, **kwargs):
-        super().__init__(water_nodes=water_nodes, **kwargs)
-
-        # Control parameters
-        self.hp_only_mode = hp_only_mode
-        self.er_only_mode = False  # True when ambient temp is very hot or cold, forces HP off
-        hp_on_time = kwargs.get('HPWH Minimum On Time (min)', 10)
-        hp_off_time = kwargs.get('HPWH Minimum Off Time (min)', 0)
-        self.min_time_in_mode['Heat Pump On'] = dt.timedelta(minutes=hp_on_time)
-        self.min_time_in_mode['Off'] = dt.timedelta(minutes=hp_off_time)
-
-        self.deadband_temp = kwargs.get('Deadband Temperature (C)', 8.17)  # different default than ERWH
-
-        # Nominal COP based on simulation of the UEF test procedure at varying COPs
-        self.low_power_hpwh = kwargs.get('Low Power HPWH', True)
-        self.cop_nominal = kwargs['HPWH COP (-)']
-        self.hp_cop = self.cop_nominal
-        if self.cop_nominal < 2:
-            self.warn("Low Nominal COP:", self.cop_nominal)
-
-        # Heat pump capacity and power parameters - hardcoded for now
-        if 'HPWH Capacity (W)' in kwargs:
-            self.hp_capacity_nominal = kwargs['HPWH Capacity (W)']  # max heating capacity, in W
-        else:
-            hp_power_nominal = kwargs.get('HPWH Power (W)', 500)  # in W
-            self.hp_capacity_nominal = hp_power_nominal * self.hp_cop  # in W
-        self.hp_capacity = self.hp_capacity_nominal  # in W
-        self.parasitic_power = kwargs.get('HPWH Parasitics (W)', 1)  # Standby power in W
-        self.fan_power = kwargs.get('HPWH Fan Power (W)', 35)  # in W
-
-        # Dynamic capacity coefficients
-        # curve format: [1, t_in_wet, t_in_wet ** 2, t_lower, t_lower ** 2, t_lower * t_in_wet]
-        if self.low_power_hpwh:
-            self.hp_capacity_coeff = np.array([0.813, 0.0160, 0.000537, 0.0020319, -0.0000860, -0.0000686])
-            self.cop_coeff = np.array([1.1332, 0.063, -0.0000979, -0.00972, -0.0000214, -0.000686])
-
-        else:
-            self.hp_capacity_coeff = np.array([0.563, 0.0437, 0.000039, 0.0055, -0.000148, -0.000145])
-            self.cop_coeff = np.array([1.0132, .0436, 0.0000117, -0.01113, 0.00003688, -0.000498])
-
-        # Sensible and latent heat parameters
-        self.shr_nominal = kwargs.get('HPWH SHR (-)', 0.88)  # unitless
-        lost_heat_default = 0.75 if self.zone_name == 'Indoor' else 1  # for sensible heat gain
-        self.lost_heat_fraction = 1 - kwargs.get('HPWH Interaction Factor (-)', lost_heat_default)
-        self.wall_heat_fraction = kwargs.get('HPWH Wall Interaction Factor (-)', 0.5)
-        if self.wall_heat_fraction and self.zone:
-            walls = [s for s in self.zone.surfaces if s.boundary_name == 'Interior Wall']
-            if not walls:
-                raise OCHREException(f'Interior wall surface not found, required for {self.name} model.')
-            self.wall_surface = walls[0]
-        else:
-            self.wall_surface = None
-            # if self.wall_heat_fraction:
-            #     zone_name = self.zone_name if self.zone_name is not None else 'External'
-            #     self.warn(f'Removing HPWH wall heat fraction because zone is {zone_name}')
-            #     self.wall_heat_fraction = 0
-
-        # nodes used for HP delivered heat, also used for t_lower for biquadratic equations
-        if self.model.n_nodes == 1:
-            self.hp_nodes = np.array([1])
-        elif self.model.n_nodes == 2:
-            self.hp_nodes = np.array([0, 1])
-        elif self.model.n_nodes == 12:
-            self.hp_nodes = np.array([0, 0, 0, 0, 0, 5, 10, 15, 20, 25, 30, 5]) / 110
-        else:
-            raise OCHREException('{} model not defined for tank with {} nodes'.format(self.name, self.model.n_nodes))
-    
-        self.battery_soc = kwargs.get('Battery State of Charge (%)', 0)
-        self.tank_soc = kwargs.get('Thermal Tank State of Charge (%)', 0)
-        self.demand_rate = kwargs.get('Demand Rate (%)', 0)
-
 
     def update_inputs(self, schedule_inputs=None):
         # Add wet and dry bulb temperatures to schedule
@@ -873,50 +787,23 @@ class ESEHeatPumpWaterHeater(ElectricResistanceWaterHeater):
 
         self.duty_cycle_by_mode = {
             'Heat Pump On': d_hp,
-            'Both On': d_hp + d_upper,
             'Upper On': d_upper,
             'Lower On': 0,
             'Off': 1 - d_upper - d_hp,
         }
 
     def run_thermostat_control(self, use_future_states=False):
-        # Fetch battery SOC, thermal tank SOC, and demand rate
-        battery_soc = self.battery_soc  # Battery state of charge (0-100%)
-        thermal_soc = self.tank_soc  # Thermal tank SOC (0-100%)
-        demand_rate = self.demand_rate  # Demand rate as a percentage (0-100%)
-
-        # Fetch temperature states
-        model_temps = self.model.states if not use_future_states else self.model.next_states
-        t_upper = model_temps[self.t_upper_idx]
-        t_lower = model_temps[self.t_lower_idx]
-        t_control = (3 / 4) * t_upper + (1 / 4) * t_lower
-
-        if self.battery_soc < 50 and self.tank_soc < 50:
-            self.er_only_mode = True
-
-        # If in ER-only mode, ensure only resistive heating is used
+        # TODO: Need HPWH control logic validation
         if self.er_only_mode:
             if self.mode == 'Heat Pump On':
                 self.mode = 'Off'
             return super().run_thermostat_control()
 
-        # Select heating mode based on charge states and demand rate
-        heating_mode = 'Off'
+        model_temps = self.model.states if not use_future_states else self.model.next_states
+        t_upper = model_temps[self.t_upper_idx]
+        t_lower = model_temps[self.t_lower_idx]
+        t_control = (3 / 4) * t_upper + (1 / 4) * t_lower
 
-        if battery_soc > 60 and demand_rate > 70:
-            # If battery > 60% and demand > 70%, use both heat pump and resistive heater
-            heating_mode = 'Both On'
-        elif battery_soc < 20:
-            # If battery is low, conserve power and prefer heat pump
-            heating_mode = 'Heat Pump On'
-        elif demand_rate > 50 or thermal_soc < 40:
-            # If demand is high or tank SOC is low, prioritize resistive heater
-            heating_mode = 'Upper On'
-        else:
-            # Otherwise, default to heat pump for efficiency
-            heating_mode = 'Heat Pump On'
-
-        # Apply thermostat logic
         if not self.hp_only_mode:
             if t_upper < self.setpoint_temp - 13 or (self.mode == 'Upper On' and t_upper < self.setpoint_temp):
                 return 'Upper On'
@@ -924,13 +811,11 @@ class ESEHeatPumpWaterHeater(ElectricResistanceWaterHeater):
                 return 'Lower On'
 
         if self.mode in ['Upper On', 'Lower On'] or t_control < self.setpoint_temp - self.deadband_temp:
-            return 'Heat Pump On' if heating_mode == "Heat Pump Only" else "Upper On & Heat Pump"
+            return 'Heat Pump On'
         elif t_control >= self.setpoint_temp:
             return 'Off'
-        elif t_upper >= self.setpoint_temp + 1:
+        elif t_upper >= self.setpoint_temp + 1:  # TODO: Could mess with this a little
             return 'Off'
-
-        return heating_mode
 
     def update_internal_control(self):
         # operate as ERWH when ambient temperatures are out of bounds
@@ -947,7 +832,6 @@ class ESEHeatPumpWaterHeater(ElectricResistanceWaterHeater):
             self.er_only_mode = False
 
         return super().update_internal_control()
-
 
     def add_heat_from_mode(self, mode, heats_to_tank=None, duty_cycle=1):
         heats_to_tank = super().add_heat_from_mode(mode, heats_to_tank, duty_cycle)
@@ -1024,7 +908,6 @@ class ESEHeatPumpWaterHeater(ElectricResistanceWaterHeater):
             results[f'{self.end_use} Heat Pump On Fraction (-)'] = hp_on_frac
             results[f'{self.end_use} Heat Pump COP (-)'] = self.hp_cop
         return results
-
 
 class GasWaterHeater(WaterHeater):
     name = 'Gas Water Heater'

@@ -4,7 +4,8 @@ from .EventBasedLoad import EventBasedLoad, DailyLoad
 from .HVAC import HVAC, Heater, ElectricFurnace, ElectricBaseboard, ElectricBoiler, GasFurnace, GasBoiler,\
     HeatPumpHeater, ASHPHeater, MinisplitAHSPHeater, Cooler, AirConditioner, ASHPCooler, RoomAC, MinisplitAHSPCooler
 from .WaterHeater import WaterHeater, ElectricResistanceWaterHeater, HeatPumpWaterHeater, GasWaterHeater, \
-    TanklessWaterHeater, GasTanklessWaterHeater
+    TanklessWaterHeater, GasTanklessWaterHeater, ESEHeatPumpWaterHeater, ESEElectricResistanceWaterHeater, \
+    LPHeatPumpWaterHeater
 from .Generator import Generator, GasGenerator, GasFuelCell
 from .PV import PV
 from .Battery import Battery
@@ -41,6 +42,9 @@ EQUIPMENT_BY_NAME = {
         GasWaterHeater, 
         TanklessWaterHeater, 
         GasTanklessWaterHeater,
+        LPHeatPumpWaterHeater,
+        ESEHeatPumpWaterHeater,
+        ESEElectricResistanceWaterHeater,
     ]},
 
     # 'EV'
